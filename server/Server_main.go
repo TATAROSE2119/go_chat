@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 )
@@ -13,6 +14,41 @@ var (
 	client = make(map[net.Conn]string) // key: 连接对象, value: 用户名
 	mutex  = &sync.Mutex{}             // 使用互斥锁来保护对 client map 的并发访问
 )
+
+// 获取本机的所有IP地址
+func getLocalIPs() []string {
+	var ips []string
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ips
+	}
+
+	for _, iface := range interfaces {
+		// 跳过未启用的接口
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		// 跳过回环接口
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				if v.IP.To4() != nil {
+					ips = append(ips, v.IP.String())
+				}
+			}
+		}
+	}
+	return ips
+}
 
 // 广播函数：将消息发送给所有连接的客户端（除了发送者自己）
 func broadcast(sender net.Conn, msg string) {
@@ -67,6 +103,13 @@ func removeClient(conn net.Conn) string {
 	name := client[conn]
 	delete(client, conn)
 	return name
+}
+
+// 获取当前在线用户数
+func getOnlineCount() int {
+	mutex.Lock()
+	defer mutex.Unlock()
+	return len(client)
 }
 
 // 处理客户端连接的函数
@@ -127,8 +170,9 @@ func handleConn(conn net.Conn) {
 	}
 
 	// 向所有人广播新用户加入的消息
-	broadcast(conn, fmt.Sprintf("✅ %s 加入了聊天室", name))
-	fmt.Printf("用户 %s 已加入聊天室\n", name)
+	onlineCount := getOnlineCount()
+	broadcast(conn, fmt.Sprintf("✅ %s 加入了聊天室 (当前在线: %d人)", name, onlineCount))
+	fmt.Printf("用户 %s 已加入聊天室 (当前在线: %d人)\n", name, onlineCount)
 
 	// 持续读取客户端发送的消息
 	for {
@@ -153,20 +197,44 @@ func handleConn(conn net.Conn) {
 	// 用户断开连接后,清理客户端映射，通知其他人
 	userName := removeClient(conn)
 	if userName != "" {
-		broadcast(conn, fmt.Sprintf("❌ %s 离开了聊天室", userName))
-		fmt.Printf("用户 %s 已断开连接\n", userName)
+		onlineCount := getOnlineCount()
+		broadcast(conn, fmt.Sprintf("❌ %s 离开了聊天室 (当前在线: %d人)", userName, onlineCount))
+		fmt.Printf("用户 %s 已断开连接 (当前在线: %d人)\n", userName, onlineCount)
 	}
 }
 
 func main() {
-	// 启动TCP监听 监听8080端口
-	listener, err := net.Listen("tcp", ":8080")
+	// 可以通过命令行参数指定端口
+	port := ":8080"
+	if len(os.Args) > 1 {
+		port = ":" + os.Args[1]
+	}
+
+	// 启动TCP监听
+	listener, err := net.Listen("tcp", port)
 	if err != nil {
 		panic(fmt.Sprintf("监听失败: %v", err))
 	}
 	defer listener.Close()
 
-	fmt.Println("🚀 聊天服务器已启动，监听端口: 8080")
+	fmt.Println("🚀 聊天服务器已启动")
+	fmt.Printf("📡 监听端口: %s\n", port)
+
+	// 显示本机IP地址
+	fmt.Println("📍 本机IP地址:")
+	fmt.Printf("   - localhost%s (本地连接)\n", port)
+
+	ips := getLocalIPs()
+	if len(ips) > 0 {
+		for _, ip := range ips {
+			fmt.Printf("   - %s%s (局域网连接)\n", ip, port)
+		}
+		fmt.Println("\n💡 提示: 局域网内的其他设备可以使用上述IP地址连接到聊天室")
+	} else {
+		fmt.Println("   ⚠️  未能获取局域网IP地址")
+	}
+
+	fmt.Println("\n等待客户端连接...\n")
 
 	// 循环接受客户端链接
 	for {
