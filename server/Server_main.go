@@ -2,16 +2,13 @@ package main
 
 import (
 	"bufio"
+	"fmt"
+	"net"
 	"strings"
-)            // Importing bufio for buffered I/O
-import "fmt" // Importing fmt for formatted I/O
-import "net" // Importing net for networking
-// Importing strings for string manipulation
-// Importing os for operating system functionality
-import "sync" // Importing sync for synchronization primitives
+	"sync"
+)
 
 // 创建一个客户端的连接池用于存储所有已连接的客户端连接和用户名
-
 var (
 	client = make(map[net.Conn]string) // key: 连接对象, value: 用户名
 	mutex  = &sync.Mutex{}             // 使用互斥锁来保护对 client map 的并发访问
@@ -19,92 +16,168 @@ var (
 
 // 广播函数：将消息发送给所有连接的客户端（除了发送者自己）
 func broadcast(sender net.Conn, msg string) {
-	mutex.Lock()         // 锁定互斥锁，防止并发访问
-	defer mutex.Unlock() // 解锁互斥锁
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// 创建一个临时切片来存储需要删除的连接
+	var toDelete []net.Conn
 
 	for conn := range client {
-		if conn != sender { // 如果连接不是发送者的连接
-			_, err := fmt.Fprintln(conn, msg) // 向连接发送消息
-			if err != nil {                   // 如果发送消息失败
-				fmt.Println("发送消息错误:", err)
-				mutex.Lock()
-				delete(client, conn)
-				mutex.Unlock()
+		if conn != sender {
+			_, err := fmt.Fprintln(conn, msg)
+			if err != nil {
+				fmt.Printf("发送消息到 %s 失败: %v\n", client[conn], err)
+				toDelete = append(toDelete, conn)
 			}
 		}
 	}
+
+	// 删除失效的连接
+	for _, conn := range toDelete {
+		delete(client, conn)
+		conn.Close()
+	}
+}
+
+// 检查用户名是否已存在
+func isUserNameExists(name string) bool {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	for _, existingName := range client {
+		if existingName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// 添加客户端到连接池
+func addClient(conn net.Conn, name string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	client[conn] = name
+}
+
+// 从连接池中移除客户端
+func removeClient(conn net.Conn) string {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	name := client[conn]
+	delete(client, conn)
+	return name
 }
 
 // 处理客户端连接的函数
 func handleConn(conn net.Conn) {
-	defer conn.Close() // 确保连接在函数结束时关闭
+	defer func() {
+		conn.Close()
+		fmt.Printf("连接 %s 已关闭\n", conn.RemoteAddr())
+	}()
 
-	// 读取客户端发送的用户名
-	reader := bufio.NewReader(conn) // 创建一个新的缓冲读取器
-	//让用户输入名称
-	fmt.Fprint(conn, "请输入您的用户名: ")       // 提示用户输入用户名
-	name, err := reader.ReadString('\n') // 读取用户输入的用户名直到换行符
+	fmt.Printf("开始处理客户端连接: %s\n", conn.RemoteAddr())
+
+	// 立即发送用户名提示
+	fmt.Printf("向 %s 发送用户名提示\n", conn.RemoteAddr())
+	prompt := "Enter your username: "
+	n, err := conn.Write([]byte(prompt))
 	if err != nil {
-		fmt.Println("读取用户名错误:", err) // 如果读取用户名失败，打印错误
-		return                       // 退出处理函数
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		fmt.Fprint(conn, "用户名不能为空\n")
+		fmt.Printf("发送提示失败: %v (写入了 %d 字节)\n", err, n)
 		return
 	}
-	mutex.Lock()
-	for _, existingName := range client {
-		if existingName == name {
-			fmt.Fprint(conn, "用户名已存在\n")
-			mutex.Unlock()
-			return
-		}
+	fmt.Printf("成功发送提示 (%d 字节): '%s'\n", n, prompt)
+
+	// 读取客户端发送的用户名
+	reader := bufio.NewReader(conn)
+	fmt.Printf("等待 %s 输入用户名...\n", conn.RemoteAddr())
+
+	name, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Printf("读取用户名失败: %v\n", err)
+		return
 	}
-	client[conn] = name
-	mutex.Unlock()
-	//向所有人广播新用户加入的消息
-	broadcast(conn, fmt.Sprintf("✅ %s 加入了聊天室", name)) // 广播新用户加入的消息
+
+	name = strings.TrimSpace(name)
+	fmt.Printf("收到用户名: '%s' (来自 %s)\n", name, conn.RemoteAddr())
+
+	if name == "" {
+		fmt.Printf("用户名为空，拒绝连接 %s\n", conn.RemoteAddr())
+		conn.Write([]byte("ERROR:Username cannot be empty\n"))
+		return
+	}
+
+	// 检查用户名是否已存在
+	if isUserNameExists(name) {
+		fmt.Printf("用户名 '%s' 已存在，拒绝连接 %s\n", name, conn.RemoteAddr())
+		conn.Write([]byte("ERROR:Username already exists\n"))
+		return
+	}
+
+	// 添加客户端到连接池
+	addClient(conn, name)
+
+	// 发送成功连接确认
+	fmt.Printf("用户 '%s' 连接成功，发送确认\n", name)
+	_, err = conn.Write([]byte("SUCCESS:Connected successfully\n"))
+	if err != nil {
+		fmt.Printf("发送成功确认失败: %v\n", err)
+		removeClient(conn)
+		return
+	}
+
+	// 向所有人广播新用户加入的消息
+	broadcast(conn, fmt.Sprintf("✅ %s 加入了聊天室", name))
+	fmt.Printf("用户 %s 已加入聊天室\n", name)
+
 	// 持续读取客户端发送的消息
 	for {
-		msg, err := reader.ReadString('\n') // 读取客户端发送的消息直到换行符
+		msg, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("读取消息错误:", err) // 如果读取消息失败，打印错误
-			break                       // 退出循环，结束处理函数
+			fmt.Printf("用户 %s 连接断开: %v\n", name, err)
+			break
 		}
-		msg = strings.TrimSpace(msg) // 去除消息两端的空白字符
-		if msg == "exit" {           // 如果收到 "exit" 消息
-			fmt.Printf("用户 %s 已退出聊天室\n", name) // 打印用户退出信息
-			break                              // 退出循环，结束处理函数
-		}
-		// 向所有人广播用户发送的消息
-		broadcast(conn, fmt.Sprintf(" %s:%s", name, msg))
-	}
-	//用户断开连接后,清理客户端映射，通知其他人
-	mutex.Lock()         // 锁定互斥锁，防止并发访问
-	delete(client, conn) // 从 client map 中删除断开连接的客户端
-	mutex.Unlock()       // 解锁互斥锁
 
-	broadcast(conn, fmt.Sprintf("❌ %s 离开了聊天室", name)) // 广播用户离开聊天室的消息
-	fmt.Printf("用户 %s 已断开连接\n", name)                 // 打印用户断开连接的信息
+		msg = strings.TrimSpace(msg)
+		if msg == "exit" {
+			fmt.Printf("用户 %s 主动退出聊天室\n", name)
+			break
+		}
+
+		if msg != "" {
+			fmt.Printf("收到 %s 的消息: %s\n", name, msg)
+			broadcast(conn, fmt.Sprintf("%s: %s", name, msg))
+		}
+	}
+
+	// 用户断开连接后,清理客户端映射，通知其他人
+	userName := removeClient(conn)
+	if userName != "" {
+		broadcast(conn, fmt.Sprintf("❌ %s 离开了聊天室", userName))
+		fmt.Printf("用户 %s 已断开连接\n", userName)
+	}
 }
 
 func main() {
-	//启动TCP监听 监听8080端口
+	// 启动TCP监听 监听8080端口
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		panic(err) // 如果监听失败，打印错误并退出
+		panic(fmt.Sprintf("监听失败: %v", err))
 	}
-	defer listener.Close() // 确保在程序结束时关闭监听器
+	defer listener.Close()
+
 	fmt.Println("🚀 聊天服务器已启动，监听端口: 8080")
-	//循环接受客户端链接
+
+	// 循环接受客户端链接
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("连接错误:", err) // 如果接受连接失败，打印错误
-			continue                  // 继续等待下一个连接
+			fmt.Printf("接受连接失败: %v\n", err)
+			continue
 		}
+
+		fmt.Printf("新客户端连接: %s -> %s\n", conn.RemoteAddr(), conn.LocalAddr())
 		// 启动一个新的 goroutine 来处理客户端连接
-		go handleConn(conn) // 异步处理连接
+		go handleConn(conn)
 	}
 }
