@@ -1,243 +1,199 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"fyne.io/fyne/v2"
-	"net"
-	"strings"
+	"time"
 
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-type ChatClient struct {
-	conn        net.Conn
-	chatArea    *widget.RichText
-	messageList *container.Scroll
-	window      fyne.Window
-}
-
 func main() {
+	// 创建新的应用
 	myApp := app.New()
-	myWindow := myApp.NewWindow("聊天室客户端")
-	myWindow.Resize(fyne.NewSize(600, 400))
+	myApp.SetIcon(theme.ComputerIcon()) // 设置应用图标
 
-	client := &ChatClient{window: myWindow}
+	// 创建主窗口
+	myWindow := myApp.NewWindow("Fyne 简单示例")
+	myWindow.Resize(fyne.NewSize(500, 400))
+	myWindow.CenterOnScreen()
 
-	// 连接界面
-	client.showConnectDialog()
+	// 创建各种UI组件
+	createContent(myWindow)
 
+	// 显示窗口并运行应用
 	myWindow.ShowAndRun()
 }
 
-func (c *ChatClient) showConnectDialog() {
-	serverEntry := widget.NewEntry()
-	serverEntry.SetText("localhost:8080")
-	serverEntry.SetPlaceHolder("服务器地址:端口")
+func createContent(window fyne.Window) {
+	// 1. 标题标签
+	title := widget.NewLabel("🌟 欢迎使用 Fyne GUI 框架！")
+	title.Alignment = fyne.TextAlignCenter
+	title.TextStyle = fyne.TextStyle{Bold: true}
 
-	usernameEntry := widget.NewEntry()
-	usernameEntry.SetPlaceHolder("用户名")
+	// 2. 文本输入框
+	nameEntry := widget.NewEntry()
+	nameEntry.SetPlaceHolder("请输入您的姓名...")
 
-	form := &widget.Form{
-		Items: []*widget.FormItem{
-			{Text: "服务器地址", Widget: serverEntry},
-			{Text: "用户名", Widget: usernameEntry},
-		},
-	}
+	// 3. 多行文本输入
+	messageEntry := widget.NewMultiLineEntry()
+	messageEntry.SetPlaceHolder("在这里输入多行文本...")
+	messageEntry.Resize(fyne.NewSize(400, 100))
 
-	dialog.ShowForm("连接到聊天室", "连接", "取消", form.Items, func(ok bool) {
-		if !ok {
-			c.window.Close()
-			return
+	// 4. 按钮示例
+	greetButton := widget.NewButton("问候", func() {
+		name := nameEntry.Text
+		if name == "" {
+			name = "陌生人"
 		}
+		greeting := fmt.Sprintf("你好，%s！欢迎使用 Fyne！", name)
 
-		if serverEntry.Text == "" || usernameEntry.Text == "" {
-			dialog.ShowError(fmt.Errorf("请填写所有字段"), c.window)
-			c.showConnectDialog()
-			return
-		}
-
-		c.connectToServer(serverEntry.Text, usernameEntry.Text)
-	}, c.window)
-}
-
-func (c *ChatClient) connectToServer(server, username string) {
-	conn, err := net.Dial("tcp", server)
-	if err != nil {
-		dialog.ShowError(fmt.Errorf("连接失败: %v", err), c.window)
-		c.showConnectDialog()
-		return
-	}
-
-	c.conn = conn
-	c.setupChatInterface(username)
-}
-
-func (c *ChatClient) setupChatInterface(username string) {
-	// 聊天消息显示区域
-	c.chatArea = widget.NewRichText()
-	c.chatArea.Wrapping = fyne.TextWrapWord
-
-	scroll := container.NewScroll(c.chatArea)
-	scroll.SetMinSize(fyne.NewSize(580, 300))
-
-	// 消息输入区域
-	messageEntry := widget.NewEntry()
-	messageEntry.SetPlaceHolder("输入消息...")
-	messageEntry.MultiLine = false
-
-	sendButton := widget.NewButton("发送", func() {
-		c.sendMessage(messageEntry.Text)
-		messageEntry.SetText("")
+		// 显示信息对话框
+		dialog.ShowInformation("问候", greeting, window)
 	})
 
-	// 回车发送消息
-	messageEntry.OnSubmitted = func(text string) {
-		c.sendMessage(text)
-		messageEntry.SetText("")
-	}
-
-	// 底部输入栏
-	inputContainer := container.NewBorder(nil, nil, nil, sendButton, messageEntry)
-
-	// 顶部工具栏
-	disconnectButton := widget.NewButton("断开连接", func() {
-		c.disconnect()
+	// 5. 复选框
+	checkbox := widget.NewCheck("启用高级功能", func(checked bool) {
+		if checked {
+			fmt.Println("✅ 高级功能已启用")
+		} else {
+			fmt.Println("❌ 高级功能已禁用")
+		}
 	})
 
-	toolbar := container.NewHBox(
-		widget.NewLabel(fmt.Sprintf("用户: %s", username)),
+	// 6. 选择框
+	selectWidget := widget.NewSelect([]string{"选项1", "选项2", "选项3"}, func(selected string) {
+		fmt.Printf("选择了：%s\n", selected)
+	})
+	selectWidget.SetSelected("选项1") // 设置默认选择
+
+	// 7. 进度条
+	progressBar := widget.NewProgressBar()
+	progressBar.SetValue(0.0)
+
+	// 8. 进度条控制按钮
+	startProgressButton := widget.NewButton("开始进度", func() {
+		go func() {
+			for i := 0; i <= 100; i++ {
+				progressBar.SetValue(float64(i) / 100.0)
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+	})
+
+	resetProgressButton := widget.NewButton("重置进度", func() {
+		progressBar.SetValue(0.0)
+	})
+
+	// 9. 滑块
+	slider := widget.NewSlider(0, 100)
+	slider.Value = 50
+	sliderLabel := widget.NewLabel("滑块值: 50")
+	slider.OnChanged = func(value float64) {
+		sliderLabel.SetText(fmt.Sprintf("滑块值: %.0f", value))
+	}
+
+	// 10. 颜色和主题按钮
+	themeButton := widget.NewButton("切换主题", func() {
+		// 这里演示如何显示确认对话框
+		dialog.ShowConfirm("切换主题", "确定要切换到深色主题吗？", func(confirmed bool) {
+			if confirmed {
+				app.New().Settings().SetTheme(theme.DarkTheme())
+				dialog.ShowInformation("主题", "已切换到深色主题（重启生效）", window)
+			}
+		}, window)
+	})
+
+	// 11. 时间显示标签
+	timeLabel := widget.NewLabel("")
+	updateTime := func() {
+		timeLabel.SetText("当前时间: " + time.Now().Format("2006-01-02 15:04:05"))
+	}
+	updateTime() // 初始更新
+
+	// 定时更新时间
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		for range ticker.C {
+			updateTime()
+		}
+	}()
+
+	// 12. 退出按钮
+	quitButton := widget.NewButton("退出程序", func() {
+		dialog.ShowConfirm("退出", "确定要退出程序吗？", func(confirmed bool) {
+			if confirmed {
+				window.Close()
+			}
+		}, window)
+	})
+
+	// 创建布局容器
+	// 顶部区域
+	topContainer := container.NewVBox(
+		title,
 		widget.NewSeparator(),
-		disconnectButton,
 	)
 
-	// 主布局
-	content := container.NewBorder(toolbar, inputContainer, nil, nil, scroll)
-	c.window.SetContent(content)
+	// 输入区域
+	inputContainer := container.NewVBox(
+		widget.NewLabel("📝 输入演示:"),
+		nameEntry,
+		messageEntry,
+		greetButton,
+	)
 
-	// 处理用户名认证
-	c.authenticateUser(username)
+	// 控件区域
+	controlsContainer := container.NewVBox(
+		widget.NewLabel("🎛️ 控件演示:"),
+		checkbox,
+		selectWidget,
+		container.NewHBox(sliderLabel, slider),
+	)
 
-	// 启动消息接收goroutine
-	go c.receiveMessages()
-}
+	// 进度条区域
+	progressContainer := container.NewVBox(
+		widget.NewLabel("📊 进度条演示:"),
+		progressBar,
+		container.NewHBox(startProgressButton, resetProgressButton),
+	)
 
-func (c *ChatClient) authenticateUser(username string) {
-	// 读取服务器提示
-	buffer := make([]byte, 1024)
-	_, err := c.conn.Read(buffer)
-	if err != nil {
-		c.showError("读取服务器提示失败: " + err.Error())
-		return
-	}
+	// 底部区域
+	bottomContainer := container.NewVBox(
+		widget.NewSeparator(),
+		timeLabel,
+		container.NewHBox(themeButton, quitButton),
+	)
 
-	// 发送用户名
-	_, err = fmt.Fprintf(c.conn, "%s\n", username)
-	if err != nil {
-		c.showError("发送用户名失败: " + err.Error())
-		return
-	}
+	// 使用滚动容器包装所有内容
+	content := container.NewVBox(
+		topContainer,
+		widget.NewSeparator(),
+		inputContainer,
+		widget.NewSeparator(),
+		controlsContainer,
+		widget.NewSeparator(),
+		progressContainer,
+		bottomContainer,
+	)
 
-	// 读取认证结果
-	n, err := c.conn.Read(buffer)
-	if err != nil {
-		c.showError("读取认证结果失败: " + err.Error())
-		return
-	}
+	// 创建滚动容器
+	scroll := container.NewScroll(content)
+	scroll.SetMinSize(fyne.NewSize(480, 360))
 
-	response := strings.TrimSpace(string(buffer[:n]))
-	if strings.HasPrefix(response, "ERROR:") {
-		c.showError(strings.TrimPrefix(response, "ERROR:"))
-		return
-	}
+	// 设置窗口内容
+	window.SetContent(scroll)
 
-	c.addMessage("系统", "✅ 成功连接到聊天室！", "green")
-}
-
-func (c *ChatClient) sendMessage(message string) {
-	if message == "" {
-		return
-	}
-
-	if c.conn == nil {
-		c.showError("未连接到服务器")
-		return
-	}
-
-	_, err := fmt.Fprintf(c.conn, "%s\n", message)
-	if err != nil {
-		c.showError("发送消息失败: " + err.Error())
-		return
-	}
-
-	if message == "exit" {
-		c.disconnect()
-	}
-}
-
-func (c *ChatClient) receiveMessages() {
-	if c.conn == nil {
-		return
-	}
-
-	reader := bufio.NewReader(c.conn)
-	for {
-		message, err := reader.ReadString('\n')
-		if err != nil {
-			c.addMessage("系统", "❌ 连接已断开", "red")
-			break
-		}
-
-		message = strings.TrimSpace(message)
-		if message != "" {
-			// 解析消息类型并着色
-			if strings.Contains(message, "加入了聊天室") {
-				c.addMessage("系统", message, "green")
-			} else if strings.Contains(message, "离开了聊天室") {
-				c.addMessage("系统", message, "orange")
-			} else {
-				// 普通聊天消息
-				parts := strings.SplitN(message, ": ", 2)
-				if len(parts) == 2 {
-					c.addMessage(parts[0], parts[1], "black")
-				} else {
-					c.addMessage("", message, "black")
-				}
+	// 设置窗口关闭时的确认
+	window.SetCloseIntercept(func() {
+		dialog.ShowConfirm("退出确认", "确定要关闭应用程序吗？", func(confirmed bool) {
+			if confirmed {
+				window.Close()
 			}
-		}
-	}
-}
-
-func (c *ChatClient) addMessage(sender, message, color string) {
-	var displayText string
-	if sender != "" {
-		displayText = fmt.Sprintf("[%s] %s", sender, message)
-	} else {
-		displayText = message
-	}
-
-	// 在UI线程中更新界面
-	currentText := c.chatArea.Text
-	newText := currentText + displayText + "\n"
-	c.chatArea.SetText(newText)
-
-	// 滚动到底部
-	if c.messageList != nil {
-		c.messageList.ScrollToBottom()
-	}
-}
-
-func (c *ChatClient) showError(message string) {
-	dialog.ShowError(fmt.Errorf(message), c.window)
-}
-
-func (c *ChatClient) disconnect() {
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
-	c.showConnectDialog()
+		}, window)
+	})
 }
